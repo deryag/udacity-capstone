@@ -1,0 +1,26 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "title": "create-image",
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "minLength": 0
+        },
+        "description": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 30
+        },
+        "filter": {
+            "type": "string",
+            "minLength": 0
+        }
+    },
+    "required": [
+        "name",
+        "description",
+        "filter"
+    ],
+    "additionalProperties": false
+}

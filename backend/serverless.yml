@@ -1,0 +1,515 @@
+service:
+  name: udagram-capstone-app
+
+plugins:
+  - serverless-webpack
+  - serverless-iam-roles-per-function
+  - serverless-aws-documentation
+  - serverless-reqvalidator-plugin
+  - serverless-plugin-canary-deployments
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  tracing:
+    lambda: true
+    apiGateway: true
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-2'}
+
+  environment:
+    IMAGES_TABLE: Images-${self:provider.stage}
+    INDEX_UI_CD_NAME: ImageUserIdCreatedDateIndex
+    INDEX_ID_NAME: ImageIdIndex
+    IMAGES_S3_BUCKET: images-capstone-${self:provider.stage}
+    THUMBNAILS_S3_BUCKET: thumbnails-dev-${self:provider.stage}
+    SIGNED_URL_EXPIRATION: 600
+    ELASTICSEARCH_URL:
+      Fn::GetAtt: ["ImageSearch", "DomainEndpoint"]
+    SNS_ARN_CREATE:
+      Fn::Join:
+              - ':'
+              - - arn:aws:sns
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - imageCreateTopic-${self:provider.stage}
+    IMAGE_CREATE_TOPIC: imageCreateTopic-${self:provider.stage}
+    SNS_ARN_DESCRIPTION:
+      Fn::Join:
+              - ':'
+              - - arn:aws:sns
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - imageDescriptionTopic-${self:provider.stage}
+    IMAGE_DESCRIPTION_TOPIC: imageDescriptionTopic-${self:provider.stage}
+    SNS_ARN_DELETE:
+      Fn::Join:
+              - ':'
+              - - arn:aws:sns
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - imageDeleteTopic-${self:provider.stage}
+    IMAGE_DELETE_TOPIC: imageDeleteTopic-${self:provider.stage}
+
+custom:
+  topicName: imageTopic-${self:provider.stage}
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Images API
+        description: Serverless application for image process requests creation
+    models:
+      - name: CreateImageRequest
+        contentType: application/json
+        schema: ${file(models/create-image-request.json)}
+
+functions:
+
+  Auth:
+    handler: src/lambda/auth/auth0Authorizer.handler
+
+  GetImages:
+    handler: src/lambda/http/getImages.handler
+    events:
+      - http:
+          method: get
+          path: images
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/*
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  GetImagesElastic:
+    handler: src/lambda/http/getImagesElastic.handler
+    events:
+      - http:
+          authorizer: Auth
+          method: get
+          path: images/elastic
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+      - Effect: Allow
+        Action:
+          - es:*
+        Resource: "*"
+
+  CreateImage:
+    handler: src/lambda/http/createImage.handler
+    events:
+      - http:
+          method: post
+          path: image
+          authorizer: Auth
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new image process request
+            description: Create a new image process request
+            requestModels:
+              'application/json': CreateImageRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+      - Effect: Allow
+        Action:
+          - es:*
+        Resource: "*"
+      - Effect: Allow
+        Action:
+          - sns:Publish
+          - sns:Subscribe
+        Resource:
+          - "*"
+
+  DeleteImage:
+    handler: src/lambda/http/deleteImage.handler
+    events:
+      - http:
+          method: delete
+          path: image/{imageId}
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/*
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+      - Effect: Allow
+        Action:
+          - es:*
+        Resource: "*"
+      - Effect: Allow
+        Action:
+          - sns:Publish
+          - sns:Subscribe
+        Resource:
+          - "*"
+
+  GenerateUrl:
+    handler: src/lambda/http/generateUploadUrl.handler
+    events:
+      - http:
+          method: post
+          path: image/{imageId}/file
+          authorizer: Auth
+          cors: true
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+          - s3:PutObjectTagging
+        Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/*
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  ImageDescription:
+    handler: src/lambda/s3/imageDescription.handler
+    events:
+      - sns:
+          arn:
+            Fn::Join:
+              - ':'
+              - - arn:aws:sns
+                - Ref: AWS::Region
+                - Ref: AWS::AccountId
+                - ${self:custom.topicName}
+          topicName: ${self:custom.topicName}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.IMAGES_TABLE}/*
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+      - Effect: Allow
+        Action:
+          - s3:PutObject
+          - s3:GetObject
+          - s3:PutObjectTagging
+          - s3:GetObjectTagging
+        Resource: arn:aws:s3:::${self:provider.environment.THUMBNAILS_S3_BUCKET}/*
+
+  ImgIdxCrDoc:
+    handler: src/lambda/sns/imageCreateSubscriber.handler
+    events:
+      - sns:
+          arn: !Ref ImageCreateTopic
+          topicName: ${self:provider.environment.IMAGE_CREATE_TOPIC}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  ImgIdxUpDoc:
+    handler: src/lambda/sns/imageUpdateSubscriber.handler
+    events:
+      - sns:
+          arn: !Ref ImageDescriptionTopic
+          topicName: ${self:provider.environment.IMAGE_DESCRIPTION_TOPIC}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+  ImgIdxDelDoc:
+    handler: src/lambda/sns/imageDeleteSubscriber.handler
+    events:
+      - sns:
+          arn: !Ref ImageDeleteTopic
+          topicName: ${self:provider.environment.IMAGE_DELETE_TOPIC}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - xray:PutTraceSegments
+        Resource:
+          - "*"
+
+resources:
+  Resources:
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    ImagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdDate
+            AttributeType: S
+          - AttributeName: uploadUrl
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: id
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.IMAGES_TABLE}
+        LocalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INDEX_UI_CD_NAME}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: createdDate
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.INDEX_ID_NAME}
+            KeySchema:
+              - AttributeName: id
+                KeyType: HASH
+              - AttributeName: uploadUrl
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    ImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        NotificationConfiguration:
+          TopicConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Topic: !Ref ImageTopic
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: Policy
+          Version: '2012-10-17'
+          Statement:
+            - Sid: PublicReadWriteBucketPolicy
+              Effect: Allow
+              Principal: '*' # Anyone
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+        Bucket: !Ref ImagesBucket
+
+    CreateSNSTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action: sns:Publish
+              Resource:
+                !Ref ImageTopic
+              Condition:
+                ArnLike:
+                  AWS:SourceArn: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}
+        Topics:
+          - !Ref ImageTopic
+
+    DescriptionBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.THUMBNAILS_S3_BUCKET}
+        NotificationConfiguration:
+          TopicConfigurations:
+            - Event: s3:ObjectCreated:Put
+              Topic: !Ref ImageDescriptionTopic
+        CorsConfiguration:
+          CorsRules:
+            -
+              AllowedOrigins:
+                - '*'
+              AllowedHeaders:
+                - '*'
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+                - HEAD
+              MaxAge: 3000
+
+    DescriptionPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        PolicyDocument:
+          Id: Policy
+          Version: '2012-10-17'
+          Statement:
+            - Sid: PublicReadWriteBucketPolicy
+              Effect: Allow
+              Principal: '*' # Anyone
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: arn:aws:s3:::${self:provider.environment.THUMBNAILS_S3_BUCKET}/*
+        Bucket: !Ref DescriptionBucket
+
+    UpdateSNSTopicPolicy:
+      Type: AWS::SNS::TopicPolicy
+      Properties:
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                AWS: "*"
+              Action: sns:Publish
+              Resource:
+                !Ref ImageDescriptionTopic
+              Condition:
+                ArnLike:
+                  AWS:SourceArn: arn:aws:s3:::${self:provider.environment.THUMBNAILS_S3_BUCKET}
+        Topics:
+          - !Ref ImageDescriptionTopic
+
+    ImageTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Image bucket topic
+        TopicName: ${self:custom.topicName}
+    
+    ImageCreateTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Image create topic
+        TopicName: ${self:provider.environment.IMAGE_CREATE_TOPIC}
+
+    ImageDescriptionTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Image description topic
+        TopicName: ${self:provider.environment.IMAGE_DESCRIPTION_TOPIC}
+
+    ImageDeleteTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        DisplayName: Image deletion topic
+        TopicName: ${self:provider.environment.IMAGE_DELETE_TOPIC}
+
+    ImageSearch:
+      Type: AWS::Elasticsearch::Domain
+      Properties:
+        ElasticsearchVersion: '7.4'
+        DomainName: image-search-${self:provider.stage}
+        ElasticsearchClusterConfig:
+          DedicatedMasterEnabled: false
+          InstanceCount: '1'
+          ZoneAwarenessEnabled: false
+          InstanceType: t2.small.elasticsearch
+        EBSOptions:
+          EBSEnabled: true
+          Iops: 0
+          VolumeSize: 10
+          VolumeType: 'gp2'
+        AccessPolicies:
+          Version: '2012-10-17'
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                AWS: '*'
+              Action: 'es:*'
+              Resource: '*'
