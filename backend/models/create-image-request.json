@@ -10,7 +10,7 @@
         "description": {
             "type": "string",
             "minLength": 0,
-            "maxLength": 30
+            "maxLength": 20
         },
         "filter": {
             "type": "string",

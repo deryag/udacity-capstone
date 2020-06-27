@@ -3,10 +3,10 @@
 ### Features
 
 - Login with Auth0 (user is authenticated to see only his/her images)
-- Upload image
+- Upload image (used request-validator-plugin)
 - Apply selected filters to uploaded image (with Jimp - selected filter applied after uploading image. Therefore at first you can see original image, after refresh you can see the processed image. If you are not select any filter, original image directly uploaded to the bucket.) 
 - Delete image
-- Search in images with hashtags (with character limit)
+- Search in images with hashtags (Elasticsearch - with character limit)
 
 ### How to run the application
 
