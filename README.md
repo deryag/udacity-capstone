@@ -4,7 +4,7 @@
 
 - Login with Auth0 (user is authenticated to see only his/her images)
 - Upload image
-- Apply selected filters to uploaded image (with Jimp) 
+- Apply selected filters to uploaded image (with Jimp - selected filter applied after uploading image. Therefore at first you can see original image, after refresh you can see the processed image. If you are not select any filter, original image directly uploaded to the bucket.) 
 - Delete image
 - Search in images with hashtags (with character limit)
 
@@ -31,3 +31,7 @@ npm run start
 #### Postman collection
 
 https://www.getpostman.com/collections/3f243b08306b75c4a5cc
+
+#### Screenshot
+
+The ss of the project is added to /other/screenshots folder.
